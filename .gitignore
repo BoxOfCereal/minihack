@@ -214,3 +214,4 @@ Session.vim
 wandb
 nle_data/
 multirun/
+data/data.jsonl

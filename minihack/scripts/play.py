@@ -19,6 +19,10 @@ from nle import nethack
 import tempfile
 import shutil
 import glob
+import json
+import os
+import numpy as np
+from PIL import Image
 
 
 _ACTIONS = tuple(
@@ -87,6 +91,7 @@ def play(
     save_gif,
     gif_path,
     gif_duration,
+    dump_observations
 ):
     env_name = env
     is_raw_env = env_name == "raw"
@@ -112,6 +117,17 @@ def play(
                     "To safe GIF files of trajectories, please install Pillow:"
                     " pip install Pillow"
                 )
+            
+        if dump_observations:
+            if "observation_keys" not in env_kwargs:
+                env_kwargs["observation_keys"] = ()  # Create empty observation keys if not present
+
+            observation_keys_to_add = tuple(dump_observations)
+            env_kwargs["observation_keys"] += tuple(observation_keys_to_add)
+
+        # print(env_kwargs["observation_keys"])
+        # print(env_kwargs)
+
 
         env = gym.make(
             env_name,
@@ -139,6 +155,7 @@ def play(
         # Create a tmp directory for individual screenshots
         tmpdir = tempfile.mkdtemp()
 
+    turn = 0
     while True:
         if not no_render:
             if not is_raw_env:
@@ -154,7 +171,62 @@ def play(
                 for line in chars:
                     print(line.tobytes().decode("utf-8"))
                 print(blstats)
+        
+        if dump_observations:
+            print(f"Selected observations to dump",dump_observations)
 
+                        # Initialize variables
+            jsonl_file_path = os.path.join(savedir, 'data.jsonl')
+            print(jsonl_file_path)
+
+            # Create the directory if it doesn't exist
+            if not os.path.exists(savedir):
+                os.makedirs(savedir)
+
+            # Iterate over observations
+            with open(jsonl_file_path, 'a') as jsonl_file:
+                # Create JSON entry with all observations from obs dictionary
+                json_entry = {'t': turn, 'env_name': env_name}
+                wanted_keys = dump_observations
+                observations = dict((k, obs[k]) for k in wanted_keys if k in obs)
+
+                # Iterate over the list of observations
+                for key, value in observations.items():
+                    if key == 'pixel' or value == 'pixel_crop':
+                        # Convert the value to an array using Pillow
+                        image = Image.fromarray(value)
+
+                        # Create the file path
+                        filename = key + f"_path{turn}.jpg"
+                        filepath = os.path.join(savedir, filename)
+
+                        # Save the image
+                        image.save(filepath)
+                        
+                        # Replace the key with the key's name underscore path
+                        observations[key] = filename
+                        # "blstats"
+                    if key in ["screen_descriptions","message","chars","chars_crop","inv_strs","tty_chars","inv_letters"] :
+                        # Apply the method to each element of the array
+                        observations[key] = [item.tobytes().decode("utf-8") for item in observations[key]]
+                        print(observations[key])
+                for key, value in observations.items():
+                    if isinstance(value, np.ndarray):
+                        observations[key] = value.tolist()
+                        # Apply the method to each element of the array
+                        # converted_list = [item.tobytes().decode("utf-8") for item in arr]
+                    else:
+                        observations[key] = value
+                json_entry.update(observations)  # Add all observations from obs dictionary
+                # Write JSON entry to the JSONL file
+
+                jsonl_file.write(json.dumps(json_entry) + '\n')
+
+                # Increment the turn
+                turn += 1
+
+            print("JSON objects and images saved successfully.")
+                
         if save_gif:
             obs_image = PIL.Image.fromarray(obs["pixel_crop"])
             obs_image.save(os.path.join(tmpdir, f"e_{episodes}_s_{steps}.png"))
@@ -307,6 +379,39 @@ def main():
         type=int,
         default=300,
         help="The duration of each gif image.",
+    )
+    valid_observations = [
+    "glyphs",
+    "chars",
+    "colors",
+    "specials",
+    "screen_descriptions",
+    "pixel",
+    "blstats",
+    "message",
+    "inv_glyphs",
+    "inv_letters",
+    "inv_oclasses",
+    "inv_strs",
+    "tty_chars",
+    "tty_colors",
+    "tty_cursor",
+    "glyphs_crop",
+    "chars_crop",
+    "colors_crop",
+    "specials_crop",
+    "pixel_crop",
+    "screen_descriptions_crop",
+    "tty_chars_crop",
+    "tty_colors_crop",
+    ]
+    parser.add_argument(
+        "-o",
+        "--dump_observations",
+        nargs="+",
+        choices=valid_observations,
+        default=valid_observations,
+        help="Dump observations. Available options: " + ", ".join(valid_observations),
     )
     flags = parser.parse_args()
 
