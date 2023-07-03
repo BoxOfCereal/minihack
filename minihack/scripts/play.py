@@ -91,7 +91,8 @@ def play(
     save_gif,
     gif_path,
     gif_duration,
-    dump_observations
+    dump_observations,
+    instruction
 ):
     env_name = env
     is_raw_env = env_name == "raw"
@@ -175,7 +176,6 @@ def play(
         if dump_observations:
             print(f"Selected observations to dump",dump_observations)
 
-                        # Initialize variables
             jsonl_file_path = os.path.join(savedir, 'data.jsonl')
             print(jsonl_file_path)
 
@@ -183,43 +183,54 @@ def play(
             if not os.path.exists(savedir):
                 os.makedirs(savedir)
 
-            # Iterate over observations
+            # Iterate over observations + process
             with open(jsonl_file_path, 'a') as jsonl_file:
                 # Create JSON entry with all observations from obs dictionary
-                json_entry = {'t': turn, 'env_name': env_name}
+                json_entry = {'env_name': env_name,'instruction':instruction,'t': turn,'goal':'','action':action}
                 wanted_keys = dump_observations
                 observations = dict((k, obs[k]) for k in wanted_keys if k in obs)
 
-                # Iterate over the list of observations
-                for key, value in observations.items():
-                    if key == 'pixel' or value == 'pixel_crop':
-                        # Convert the value to an array using Pillow
-                        image = Image.fromarray(value)
+                string_observations = ["chars", "chars_crop", "tty_chars", "tty_chars_crop", "message",
+                       "screen_descriptions", "screen_descriptions_crop", "inv_letters",
+                       "inv_oclasses", "inv_strs"]
 
-                        # Create the file path
-                        filename = key + f"_path{turn}.jpg"
-                        filepath = os.path.join(savedir, filename)
+                # Save image for 'pixel' and 'pixel_crop' keys
+                observations = {
+                    key: (Image.fromarray(value).save(os.path.join(savedir, (key + f"_path{turn}.jpg"))) or key + f"_path{turn}.jpg")
+                    if key in ['pixel', 'pixel_crop'] else value
+                    for key, value in observations.items()
+                }
 
-                        # Save the image
-                        image.save(filepath)
-                        
-                        # Replace the key with the key's name underscore path
-                        observations[key] = filename
-                        # "blstats"
-                    if key in ["screen_descriptions","message","chars","chars_crop","inv_strs","tty_chars","inv_letters"] :
-                        # Apply the method to each element of the array
-                        observations[key] = [item.tobytes().decode("utf-8") for item in observations[key]]
-                        print(observations[key])
-                for key, value in observations.items():
-                    if isinstance(value, np.ndarray):
-                        observations[key] = value.tolist()
-                        # Apply the method to each element of the array
-                        # converted_list = [item.tobytes().decode("utf-8") for item in arr]
-                    else:
-                        observations[key] = value
-                json_entry.update(observations)  # Add all observations from obs dictionary
+                # Decode values for specified keys
+                observations = {
+                    key: [item.tobytes().decode("utf-8").replace("\u0000", "").strip() for item in value]
+                    if key in string_observations else value
+                    for key, value in observations.items()
+                }
+
+                # Convert 2D array to a single string with new lines for specified keys
+                observations = {
+                    key: "\n".join("".join(row) for row in value)
+                    if key in ['chars', 'chars_crop', 'tty_chars', 'tty_chars_crop'] else value
+                    for key, value in observations.items()
+                }
+
+                # Convert ndarray values to lists
+                observations = {
+                    key: value.tolist() if isinstance(value, np.ndarray) else value
+                    for key, value in observations.items()
+                }
+
+                # Remove empty string elements from 'inv_strs' list if present
+                observations['inv_strs'] = [item for item in observations.get('inv_strs', []) if item != '']
+
+                # Concatenate 'message' elements into a single string and remove extra whitespace
+                observations['message'] = ''.join([s if s != '' else ' ' for s in observations['message']]).strip()   
+
+                # Add all observations
+                json_entry.update(observations) 
+               
                 # Write JSON entry to the JSONL file
-
                 jsonl_file.write(json.dumps(json_entry) + '\n')
 
                 # Increment the turn
@@ -412,6 +423,11 @@ def main():
         choices=valid_observations,
         default=valid_observations,
         help="Dump observations. Available options: " + ", ".join(valid_observations),
+    )
+    parser.add_argument(
+        "--instruction",
+        default="Go down the stairs.",
+        help="The instruction to be given to the agent"
     )
     flags = parser.parse_args()
 

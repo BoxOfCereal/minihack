@@ -215,3 +215,4 @@ wandb
 nle_data/
 multirun/
 data/data.jsonl
+data/max/data.jsonl
